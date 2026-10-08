@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # hickory-proto and hickory-resolver must stay on the same version,
+      # so they are updated together in one PR.
+      hickory:
+        patterns: ["hickory-*"]
+      # Same for the TLS / QUIC / HTTP stack, which shares rustls types.
+      net-stack:
+        patterns: ["rustls", "tokio-rustls", "quinn", "hyper", "hyper-util", "http-body-util"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

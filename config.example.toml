@@ -1,0 +1,63 @@
+# udns example config. Usage: udns /etc/udns.toml
+
+[upstream]
+# Number of cached answers (positive and negative). ~1-2 MB at 1024.
+cache_size = 1024
+
+# With no servers listed, udns forwards to the nameservers in resolv_conf
+# (plain DNS). Nameservers that point back at udns itself are skipped.
+# On OpenWRT, /etc/resolv.conf points at 127.0.0.1, so use the WAN servers instead:
+# resolv_conf = "/tmp/resolv.conf.d/resolv.conf.auto"
+resolv_conf = "/etc/resolv.conf"
+
+# Or list upstream servers explicitly. protocol = "udp" | "tls" | "https".
+# [[upstream.servers]]
+# protocol = "tls"
+# addr = "1.1.1.1:853"
+# server_name = "cloudflare-dns.com"
+#
+# [[upstream.servers]]
+# protocol = "https"
+# addr = "9.9.9.9:443"
+# server_name = "dns.quad9.net"
+# path = "/dns-query"
+#
+# [[upstream.servers]]
+# protocol = "udp"
+# addr = "192.168.1.1:53"
+
+[blocklist]
+# http(s):// URL or a local file. Wildcard ("*.x.com"), plain domain and hosts formats work.
+# Each entry blocks the domain and all of its subdomains.
+source = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.mini.txt"
+# Last downloaded copy, used at startup so blocking works before the network is up.
+cache_file = "/etc/udns/blocklist.txt"
+refresh_hours = 24
+
+# PEM cert + key, shared by DoT, DoQ and DoH with tls = true.
+[tls]
+cert = "/etc/udns/cert.pem"
+key = "/etc/udns/key.pem"
+
+# Plain DNS, UDP + TCP on each address.
+[dns]
+enabled = true
+listen = ["0.0.0.0:53", "[::]:53"]
+
+[dot]
+enabled = false
+listen = ["0.0.0.0:853"]
+
+[doq]
+enabled = false
+listen = ["0.0.0.0:853"]
+
+[doh]
+enabled = true
+# tls = false serves plain HTTP (HTTP/1.1 and h2c), meant for running behind a reverse proxy.
+listen = ["127.0.0.1:8053"]
+tls = false
+path = "/dns-query"
+# GET / always returns "ok" (health check).
+# Optional: GET here returns query counters as JSON.
+stats_path = "/stats"

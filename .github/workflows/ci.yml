@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [senpai]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      # zig is the C compiler/linker for the static musl builds (ring has C code).
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - run: cargo zigbuild --release --locked --target ${{ matrix.target }}
+      # The x86_64 binary runs on the runner, so test the exact file we ship.
+      - if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: ci/smoke.sh target/${{ matrix.target }}/release/udns
+      - uses: actions/upload-artifact@v7
+        with:
+          name: udns-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/udns
+          if-no-files-found: error
