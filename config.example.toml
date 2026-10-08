@@ -27,10 +27,19 @@ resolv_conf = "/etc/resolv.conf"
 # addr = "192.168.1.1:53"
 
 [blocklist]
-# http(s):// URL or a local file. Wildcard ("*.x.com"), plain domain and hosts formats work.
-# Each entry blocks the domain and all of its subdomains.
-source = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.mini.txt"
-# Last downloaded copy, used at startup so blocking works before the network is up.
+# http(s):// URLs or local files, merged into one list. Wildcard ("*.x.com"), plain domain
+# and hosts formats work. Each entry blocks the domain and all of its subdomains.
+# If any source fails to download, the previous list is kept and the update retried.
+sources = [
+    "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.mini.txt",
+    # "/etc/udns/my-blocklist.txt",
+]
+# Never blocked, along with all their subdomains, even if a list blocks them.
+# For apps that break without their telemetry.
+allow = [
+    # "telemetry.example.com",
+]
+# Last downloaded copy (all sources merged), used at startup so blocking works before the network is up.
 cache_file = "/etc/udns/blocklist.txt"
 refresh_hours = 24
 

@@ -257,8 +257,9 @@ fn load_tls(files: &TlsFiles) -> Result<Arc<rustls::ServerConfig>, String> {
 /// Loads the cached list (if any), then downloads the list and refreshes it periodically.
 async fn blocklist_task(server: Arc<Server>, config: BlocklistConfig) {
     if let Some(cache_file) = config.cache_file.clone() {
+        let allow: Vec<String> = config.allow.clone();
         let parsed = tokio::task::spawn_blocking(move || {
-            blocklist::fetch(&cache_file).map(|text| Blocklist::parse(&text))
+            blocklist::fetch(&cache_file).map(|text| Blocklist::parse(&text, &allow))
         })
         .await;
         if let Ok(Ok(list)) = parsed {
@@ -268,17 +269,23 @@ async fn blocklist_task(server: Arc<Server>, config: BlocklistConfig) {
     }
 
     loop {
-        let source: String = config.source.clone();
+        let sources: Vec<String> = config.sources.clone();
         let cache_file: Option<String> = config.cache_file.clone();
+        let allow: Vec<String> = config.allow.clone();
         // Download and parse off the async thread so queries keep flowing.
         let result = tokio::task::spawn_blocking(move || -> Result<Blocklist, String> {
-            let text: String = blocklist::fetch(&source)?;
-            let list = Blocklist::parse(&text);
+            // Any failed source keeps the old list, so a dead URL can't silently shrink it.
+            let mut text = String::new();
+            for source in &sources {
+                text.push_str(&blocklist::fetch(source)?);
+                text.push('\n');
+            }
+            let list = Blocklist::parse(&text, &allow);
             if list.len() == 0 {
-                return Err(format!("{source}: no entries found, keeping the old list"));
+                return Err("no entries found in any source, keeping the old list".to_string());
             }
             if let Some(path) = cache_file {
-                if path != source {
+                if !sources.contains(&path) {
                     if let Err(e) = std::fs::write(&path, &text) {
                         eprintln!("udns: cannot write blocklist cache {path}: {e}");
                     }

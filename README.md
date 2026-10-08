@@ -4,7 +4,7 @@ A small ad-blocking DNS forwarder for low-RAM routers (OpenWRT x86_64/arm64).
 
 - Serves plain DNS (UDP + TCP), DNS-over-TLS, DNS-over-QUIC and DNS-over-HTTPS, each toggled in the config.
 - DoH can run over plain HTTP (HTTP/1.1 and h2c), so it can sit behind a reverse proxy.
-- Blocks domains from one blocklist (URL or file) and answers NXDOMAIN. Each entry blocks the domain and all of its subdomains.
+- Blocks domains from one or more blocklists (URLs or files) and answers NXDOMAIN. Each entry blocks the domain and all of its subdomains. Domains in `allow` (and their subdomains) are never blocked.
 - Forwards everything else, through a TTL cache, to the machine's own DNS servers (`/etc/resolv.conf`) by default, or to configured UDP, DoT or DoH upstreams.
 - `GET /` returns `ok` (health check). The optional `GET /stats` returns counters as JSON.
 

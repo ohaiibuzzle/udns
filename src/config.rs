@@ -65,10 +65,13 @@ pub struct UpstreamServer {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlocklistConfig {
-    /// http(s):// URL or a local file path.
-    pub source: String,
+    /// http(s):// URLs or local file paths. All lists are merged.
+    pub sources: Vec<String>,
     /// Where to keep the last downloaded copy, so blocking works right after a reboot.
     pub cache_file: Option<String>,
+    /// Domains (and their subdomains) that are never blocked.
+    #[serde(default)]
+    pub allow: Vec<String>,
     #[serde(default = "default_refresh_hours")]
     pub refresh_hours: u64,
 }
