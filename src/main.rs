@@ -40,8 +40,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // One thread is plenty for a home network and uses the least RAM.
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("cannot start tokio runtime");
