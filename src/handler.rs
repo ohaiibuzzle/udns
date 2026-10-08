@@ -7,7 +7,8 @@ use crate::blocklist::Blocklist;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::net::{DnsError, NetError};
 use hickory_resolver::proto::op::{Edns, Message, MessageType, OpCode, ResponseCode};
-use std::sync::atomic::{AtomicU64, Ordering};
+// portable-atomic (already pulled in by moka): mips32 has no native 64-bit atomics.
+use portable_atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::Semaphore;
 

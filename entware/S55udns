@@ -1,0 +1,12 @@
+#!/bin/sh
+# Entware init script for udns, installed as /opt/etc/init.d/S55udns.
+# rc.func runs the program with output sent to /dev/null, so udns logs are not kept.
+
+ENABLED=yes
+PROCS=udns
+ARGS="/opt/etc/udns.toml"
+PREARGS=""
+DESC=$PROCS
+PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+. /opt/etc/init.d/rc.func

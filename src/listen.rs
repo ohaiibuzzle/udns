@@ -8,6 +8,7 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use socket2::{Domain, Socket, Type};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -28,10 +29,34 @@ fn framed(message: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Binds a non-blocking socket. An IPv6 address only takes IPv6 traffic: by default
+/// Linux lets "[::]:53" also claim IPv4, which then collides with "0.0.0.0:53".
+fn bind_socket(addr: SocketAddr, kind: Type) -> std::io::Result<Socket> {
+    let socket: Socket = Socket::new(Domain::for_address(addr), kind, None)?;
+    if addr.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+    if kind == Type::STREAM {
+        // Same as tokio's TcpListener::bind: restart without waiting for TIME_WAIT.
+        socket.set_reuse_address(true)?;
+    }
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    if kind == Type::STREAM {
+        socket.listen(1024)?;
+    }
+    Ok(socket)
+}
+
+fn bind_tcp(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    let socket: Socket = bind_socket(addr, Type::STREAM)?;
+    TcpListener::from_std(socket.into())
+}
+
 // ---------- plain DNS over UDP ----------
 
 pub async fn serve_udp(server: Arc<Server>, addr: SocketAddr) -> Result<(), String> {
-    let socket = match UdpSocket::bind(addr).await {
+    let socket = match bind_socket(addr, Type::DGRAM).and_then(|s| UdpSocket::from_std(s.into())) {
         Ok(socket) => Arc::new(socket),
         Err(e) => return Err(format!("udp bind {addr}: {e}")),
     };
@@ -66,7 +91,7 @@ pub async fn serve_tcp(
     addr: SocketAddr,
     tls: Option<TlsAcceptor>,
 ) -> Result<(), String> {
-    let listener = match TcpListener::bind(addr).await {
+    let listener = match bind_tcp(addr) {
         Ok(listener) => listener,
         Err(e) => return Err(format!("tcp bind {addr}: {e}")),
     };
@@ -160,7 +185,17 @@ pub async fn serve_doq(
     transport.max_concurrent_uni_streams(0u32.into());
     config.transport_config(Arc::new(transport));
 
-    let endpoint = match quinn::Endpoint::server(config, addr) {
+    let socket: std::net::UdpSocket = match bind_socket(addr, Type::DGRAM) {
+        Ok(socket) => socket.into(),
+        Err(e) => return Err(format!("doq bind {addr}: {e}")),
+    };
+    let runtime = Arc::new(quinn::TokioRuntime);
+    let endpoint = match quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(config),
+        socket,
+        runtime,
+    ) {
         Ok(endpoint) => endpoint,
         Err(e) => return Err(format!("doq bind {addr}: {e}")),
     };
@@ -234,7 +269,7 @@ pub async fn serve_doh(
     paths: Arc<DohPaths>,
     tls: Option<TlsAcceptor>,
 ) -> Result<(), String> {
-    let listener = match TcpListener::bind(addr).await {
+    let listener = match bind_tcp(addr) {
         Ok(listener) => listener,
         Err(e) => return Err(format!("doh bind {addr}: {e}")),
     };

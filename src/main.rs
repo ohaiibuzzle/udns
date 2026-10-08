@@ -11,6 +11,8 @@ mod blocklist;
 mod config;
 mod handler;
 mod listen;
+#[cfg(all(target_arch = "arm", target_abi = "eabi"))]
+mod softfloat;
 
 use crate::blocklist::Blocklist;
 use crate::config::{BlocklistConfig, Config, TlsFiles, UpstreamProtocol};

@@ -1,0 +1,4 @@
+# Only what the Dockerfile copies.
+*
+!docker/
+!config.example.toml

@@ -1,8 +1,11 @@
 name: CI
 
+# Every run builds all binaries, packages and the Docker image (kept as artifacts).
+# A pushed tag vX.Y.Z also publishes them: a GitHub release and ghcr.io images.
 on:
   push:
     branches: [senpai]
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -10,12 +13,16 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - if: env.IS_RELEASE == 'true'
+        name: Tag matches Cargo.toml version
+        run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -29,28 +36,130 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+        include:
+          # qemu: user-mode emulator for the smoke test (x86 runs natively).
+          - { target: x86_64-unknown-linux-musl }
+          - { target: i686-unknown-linux-musl }
+          - { target: aarch64-unknown-linux-musl, qemu: aarch64 }
+          # Soft-float ARM binaries also run on hard-float systems.
+          - { target: armv7-unknown-linux-musleabi, qemu: arm }
+          - { target: arm-unknown-linux-musleabi, qemu: arm }
+          - { target: riscv64gc-unknown-linux-musl, qemu: riscv64 }
+          # mips has no prebuilt std (tier 3): pinned nightly + build-std.
+          - { target: mips-unknown-linux-musl, tier3: true, qemu: mips }
+          - { target: mipsel-unknown-linux-musl, tier3: true, qemu: mipsel }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
-          targets: ${{ matrix.target }}
+          toolchain: ${{ matrix.tier3 && 'nightly-2026-10-08' || 'stable' }}
+          targets: ${{ !matrix.tier3 && matrix.target || '' }}
+          components: ${{ matrix.tier3 && 'rust-src' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
       # zig is the C compiler/linker for the static musl builds (ring has C code).
+      # ponytail: 0.17.0 fails to link mips (missing zig std symbols); move up once fixed.
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: 0.15.2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-zigbuild
-      - run: cargo zigbuild --release --locked --target ${{ matrix.target }}
-      # The x86_64 binary runs on the runner, so test the exact file we ship.
-      - if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: ci/smoke.sh target/${{ matrix.target }}/release/udns
+      - run: cargo zigbuild ${{ matrix.tier3 && '-Zbuild-std=std,panic_abort' || '' }} --release --locked --target ${{ matrix.target }}
+        env:
+          # Static-PIE mips binaries from zig crash at startup; plain static ones work.
+          RUSTFLAGS: ${{ matrix.tier3 && '-C relocation-model=static' || '' }}
+      - if: matrix.qemu
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user
+      # Test the exact file we ship.
+      - run: |
+          BIN=target/${{ matrix.target }}/release/udns
+          if [ -n "${{ matrix.qemu }}" ]; then
+            printf '#!/bin/sh\nexec qemu-%s %s "$@"\n' "${{ matrix.qemu }}" "$PWD/$BIN" > run-udns
+            chmod +x run-udns
+            BIN=./run-udns
+          fi
+          ci/smoke.sh "$BIN"
       - uses: actions/upload-artifact@v7
         with:
           name: udns-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/udns
           if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: udns-*
+          path: bin
+      # Alpine 3.23+ has apk-tools 3, whose `apk mkpkg` builds OpenWRT .apk files.
+      - run: |
+          docker run --rm -v "$PWD:/src" -w /src alpine:3.23 sh -euc '
+            apk add -q tar
+            for dir in bin/udns-*; do ci/package.sh "${dir#bin/udns-}" "$dir/udns" dist; done
+            cd dist && sha256sum * > SHA256SUMS'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: dist/*
+          if-no-files-found: error
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: udns-*
+          path: bin
+      # Docker platform <- Rust target. mips has no Docker platform.
+      - run: |
+          mkdir docker
+          cp bin/udns-x86_64-unknown-linux-musl/udns docker/udns-amd64
+          cp bin/udns-i686-unknown-linux-musl/udns docker/udns-386
+          cp bin/udns-aarch64-unknown-linux-musl/udns docker/udns-arm64
+          cp bin/udns-armv7-unknown-linux-musleabi/udns docker/udns-armv7
+          cp bin/udns-arm-unknown-linux-musleabi/udns docker/udns-armv6
+          cp bin/udns-riscv64gc-unknown-linux-musl/udns docker/udns-riscv64
+      - uses: docker/setup-buildx-action@v4
+      - if: env.IS_RELEASE == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64
+          tags: ${{ env.IS_RELEASE == 'true' && format('ghcr.io/{0}:{1},ghcr.io/{0}:latest', github.repository, github.ref_name) || 'udns:ci' }}
+          outputs: ${{ env.IS_RELEASE == 'true' && 'type=registry' || 'type=oci,dest=udns-oci.tar' }}
+      - if: env.IS_RELEASE != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: udns-oci.tar
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: dist
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
