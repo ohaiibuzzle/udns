@@ -10,7 +10,7 @@ cache_size = 1024
 # resolv_conf = "/tmp/resolv.conf.d/resolv.conf.auto"
 resolv_conf = "/etc/resolv.conf"
 
-# Or list upstream servers explicitly. protocol = "udp" | "tls" | "https".
+# Or list upstream servers explicitly. protocol = "udp" | "tls" | "https" | "quic".
 # [[upstream.servers]]
 # protocol = "tls"
 # addr = "1.1.1.1:853"
@@ -21,6 +21,11 @@ resolv_conf = "/etc/resolv.conf"
 # addr = "9.9.9.9:443"
 # server_name = "dns.quad9.net"
 # path = "/dns-query"
+#
+# [[upstream.servers]]
+# protocol = "quic"
+# addr = "94.140.14.14:853"
+# server_name = "dns.adguard-dns.com"
 #
 # [[upstream.servers]]
 # protocol = "udp"

@@ -142,6 +142,7 @@ fn build_resolver(config: &Config) -> Result<TokioResolver, String> {
                 server_name,
                 upstream.path.clone().map(Arc::from),
             )],
+            UpstreamProtocol::Quic => vec![ConnectionConfig::quic(server_name)],
         };
         for connection in &mut connections {
             connection.port = upstream.addr.port();

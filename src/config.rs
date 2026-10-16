@@ -49,6 +49,7 @@ pub enum UpstreamProtocol {
     Udp,
     Tls,
     Https,
+    Quic,
 }
 
 #[derive(Deserialize)]
@@ -56,7 +57,7 @@ pub enum UpstreamProtocol {
 pub struct UpstreamServer {
     pub protocol: UpstreamProtocol,
     pub addr: SocketAddr,
-    /// TLS certificate name of the upstream. Required for tls and https.
+    /// TLS certificate name of the upstream. Required for tls, https and quic.
     pub server_name: Option<String>,
     /// URL path for https upstreams. Defaults to /dns-query.
     pub path: Option<String>,
