@@ -1,7 +1,3 @@
-// Network listeners: plain DNS (UDP + TCP), DoT, DoQ and DoH.
-// Each one only moves bytes in and out; all DNS logic lives in handler.rs.
-// Every serve_* function binds first (so bind errors are reported), then loops forever.
-
 use crate::handler::{Proto, Server};
 use base64::Engine;
 use http_body_util::{BodyExt, Full, Limited};
@@ -18,10 +14,11 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 
-/// Idle TCP/TLS connections are closed after this, so they can't pile up.
+/// timeout for idle connections, so they don't hang around forever
+/// in case something is actually stuck
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Prefixes a DNS message with its 2-byte length (TCP, DoT and DoQ framing).
+/// frame a messsage with a 2-byte length prefix, as used by TCP and DoQ
 fn framed(message: &[u8]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(message.len() + 2);
     out.extend_from_slice(&(message.len() as u16).to_be_bytes());
@@ -29,15 +26,13 @@ fn framed(message: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Binds a non-blocking socket. An IPv6 address only takes IPv6 traffic: by default
-/// Linux lets "[::]:53" also claim IPv4, which then collides with "0.0.0.0:53".
+/// bind a socket
 fn bind_socket(addr: SocketAddr, kind: Type) -> std::io::Result<Socket> {
     let socket: Socket = Socket::new(Domain::for_address(addr), kind, None)?;
     if addr.is_ipv6() {
         socket.set_only_v6(true)?;
     }
     if kind == Type::STREAM {
-        // Same as tokio's TcpListener::bind: restart without waiting for TIME_WAIT.
         socket.set_reuse_address(true)?;
     }
     socket.set_nonblocking(true)?;
@@ -62,12 +57,13 @@ pub async fn serve_udp(server: Arc<Server>, addr: SocketAddr) -> Result<(), Stri
     };
     eprintln!("udns: dns/udp listening on {addr}");
     let mut buf: Vec<u8> = vec![0u8; 4096];
+    // kick start listener loop.
     loop {
         let (len, peer) = match socket.recv_from(&mut buf).await {
             Ok(result) => result,
-            Err(_) => continue, // e.g. ICMP port unreachable reported on the socket
+            Err(_) => continue,
         };
-        // Under flood, drop queries instead of growing memory without bound.
+        // drop the requests if we got flooded
         let permit = match server.inflight.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => continue,
@@ -104,7 +100,7 @@ pub async fn serve_tcp(
         };
         let permit = match server.inflight.clone().try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => continue, // too busy: dropping `tcp` closes the connection
+            Err(_) => continue,
         };
         let server = server.clone();
         let tls = tls.clone();
@@ -122,8 +118,7 @@ pub async fn serve_tcp(
     }
 }
 
-/// Accepts one connection. On errors like "too many open files", waits a moment
-/// instead of spinning. Returns None on error.
+/// Accepts one connection.
 async fn accept(listener: &TcpListener) -> Option<TcpStream> {
     match listener.accept().await {
         Ok((tcp, _peer)) => Some(tcp),

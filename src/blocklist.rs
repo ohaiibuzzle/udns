@@ -2,10 +2,7 @@
 //
 // Every entry blocks the domain itself and all of its subdomains
 // ("*.example.com" and "example.com" mean the same thing).
-// Allowed domains (and their subdomains) are never blocked, even if a more
-// specific name is on the blocklist.
 // To save RAM, only a 64-bit hash of each domain is kept, in a sorted Vec.
-// That's 8 bytes per entry instead of 40+ for a HashSet<String>.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -16,10 +13,9 @@ pub struct Blocklist {
     allowed: Vec<u64>,
 }
 
-// ponytail: comparing hashes instead of strings can give a false positive with
-// odds of about 1e-14 per query. Store full strings if that ever matters.
+// note: can give false positives if collision occurs.
+// don't know how much of a problem that is.
 fn hash_domain(domain: &str) -> u64 {
-    // DefaultHasher::new() uses fixed keys, so equal strings always hash equally.
     let mut hasher = DefaultHasher::new();
     hasher.write(domain.as_bytes());
     hasher.finish()
@@ -33,7 +29,7 @@ impl Blocklist {
         }
     }
 
-    /// `allowed` entries use the same formats as the list text.
+    /// `allowed` entries
     pub fn parse(text: &str, allowed: &[String]) -> Blocklist {
         Blocklist {
             hashes: parse_hashes(text),
@@ -51,7 +47,7 @@ impl Blocklist {
     }
 }
 
-/// Accepts wildcard lists ("*.x.com"), plain domain lists ("x.com") and
+/// accepts wildcard lists ("*.x.com"), plain domain lists ("x.com") and
 /// hosts files ("0.0.0.0 x.com"). Lines starting with # or ! are comments.
 fn parse_hashes(text: &str) -> Vec<u64> {
     let mut hashes: Vec<u64> = Vec::new();
@@ -92,7 +88,7 @@ fn has_suffix_in(hashes: &[u64], name: &str) -> bool {
     }
 }
 
-/// Downloads (or reads) the list text. Blocking: call from spawn_blocking.
+/// blocking call to fetch blocklist
 pub fn fetch(source: &str) -> Result<String, String> {
     if !source.starts_with("http://") && !source.starts_with("https://") {
         return std::fs::read_to_string(source).map_err(|e| format!("read {source}: {e}"));
@@ -105,7 +101,7 @@ pub fn fetch(source: &str) -> Result<String, String> {
         Ok(response) => response,
         Err(e) => return Err(format!("download {source}: {e}")),
     };
-    // ureq's default body limit is 10 MB; the biggest hagezi lists are larger.
+
     let text: Result<String, ureq::Error> = response
         .body_mut()
         .with_config()

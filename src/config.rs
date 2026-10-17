@@ -1,6 +1,3 @@
-// Config file: TOML, loaded and validated once at startup.
-// See config.example.toml for a commented example.
-
 use serde::Deserialize;
 use std::net::SocketAddr;
 
@@ -57,7 +54,7 @@ pub enum UpstreamProtocol {
 pub struct UpstreamServer {
     pub protocol: UpstreamProtocol,
     pub addr: SocketAddr,
-    /// TLS certificate name of the upstream. Required for tls, https and quic.
+    /// TLS certificate name of the upstream, required for DoT and DoQ.
     pub server_name: Option<String>,
     /// URL path for https upstreams. Defaults to /dns-query.
     pub path: Option<String>,
@@ -66,11 +63,11 @@ pub struct UpstreamServer {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlocklistConfig {
-    /// http(s):// URLs or local file paths. All lists are merged.
+    /// http(s):// URLs or local file paths.
     pub sources: Vec<String>,
-    /// Where to keep the last downloaded copy, so blocking works right after a reboot.
+    /// optional cache for downloaded lists so next startups are hot.
     pub cache_file: Option<String>,
-    /// Domains (and their subdomains) that are never blocked.
+    /// allowlist
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default = "default_refresh_hours")]
@@ -96,10 +93,9 @@ pub struct Listener {
 pub struct DohListener {
     pub enabled: bool,
     pub listen: Vec<SocketAddr>,
-    /// false = plain HTTP (for use behind a reverse proxy), true = HTTPS using [tls].
+    /// false = plain HTTP (for use behind a reverse proxy)
     pub tls: bool,
     pub path: String,
-    /// If set, GET on this path returns statistics as JSON.
     pub stats_path: Option<String>,
 }
 
@@ -128,7 +124,6 @@ fn default_refresh_hours() -> u64 {
 }
 
 impl Config {
-    /// True if any enabled listener needs the [tls] certificate.
     pub fn needs_tls(&self) -> bool {
         self.dot.enabled || self.doq.enabled || (self.doh.enabled && self.doh.tls)
     }

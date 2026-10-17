@@ -1,19 +1,11 @@
-// Core query handling, shared by every protocol listener.
-//
-// Data flow: raw DNS query bytes -> parse -> blocked? NXDOMAIN
-//            -> otherwise ask the upstream resolver (it caches) -> response bytes.
-
 use crate::blocklist::Blocklist;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::net::{DnsError, NetError};
 use hickory_resolver::proto::op::{Edns, Message, MessageType, OpCode, ResponseCode};
-// portable-atomic (already pulled in by moka): mips32 has no native 64-bit atomics.
 use portable_atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::Semaphore;
 
-/// Upper bound on concurrent UDP queries plus open TCP/TLS/QUIC/HTTP connections.
-/// Keeps memory bounded on small routers when flooded.
 pub const MAX_INFLIGHT: usize = 512;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -54,8 +46,6 @@ impl Server {
     }
 
     pub fn current_blocklist(&self) -> Arc<Blocklist> {
-        // The lock is only held for an Arc clone or swap, so it can't be poisoned
-        // in practice (and panic = "abort" in release builds anyway).
         self.blocklist.read().expect("blocklist lock").clone()
     }
 
@@ -81,8 +71,7 @@ impl Server {
         )
     }
 
-    /// Answers one DNS query. Returns None only when the input is too short to
-    /// even contain a message id, so there is nothing sensible to reply.
+    // handle dns messages
     pub async fn handle(&self, proto: Proto, request: &[u8]) -> Option<Vec<u8>> {
         let counter: &AtomicU64 = match proto {
             Proto::Udp => &self.stats.udp,
@@ -140,14 +129,14 @@ impl Server {
             Ok(lookup) => {
                 response.add_answers(lookup.answers().iter().cloned());
             }
-            // NXDOMAIN or "name exists but has no records of this type".
+            // NXDOMAIN
             Err(NetError::Dns(DnsError::NoRecordsFound(no_records))) => {
                 response.metadata.response_code = no_records.response_code;
                 if let Some(soa) = no_records.soa {
                     response.add_authority(soa.into_record_of_rdata());
                 }
             }
-            // Upstream answered with an error code such as REFUSED: pass it on.
+            // passthrough upstream errors
             Err(NetError::Dns(DnsError::ResponseCode(code))) => {
                 response.metadata.response_code = code;
             }
@@ -180,7 +169,6 @@ impl Server {
 
 fn error_bytes(id: u16, code: ResponseCode) -> Vec<u8> {
     let message = Message::error_msg(id, OpCode::Query, code);
-    // A header-only message always serializes; fall back to empty just in case.
     message.to_vec().unwrap_or_default()
 }
 

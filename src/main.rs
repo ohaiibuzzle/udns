@@ -1,10 +1,3 @@
-// udns: a small ad-blocking DNS forwarder serving plain DNS, DoT, DoQ and DoH.
-//
-// Startup: read config -> build upstream resolver -> start the enabled listeners
-// -> load the blocklist in the background (after the listeners, so the download
-// works even when this machine resolves through udns itself).
-
-// Nested `if`s are kept on purpose: easier to read than `if let ... && ...` chains.
 #![allow(clippy::collapsible_if)]
 
 mod blocklist;
@@ -62,7 +55,7 @@ async fn run(config: Config) -> Result<(), String> {
         _ => None,
     };
 
-    // Every listener runs forever; if one returns, it failed (e.g. bind error).
+    // spawn listeners.
     let mut listeners: JoinSet<Result<(), String>> = JoinSet::new();
 
     if config.dns.enabled {
@@ -121,7 +114,8 @@ async fn run(config: Config) -> Result<(), String> {
         None => eprintln!("udns: no [blocklist] configured, nothing will be blocked"),
     }
 
-    // Wait for the first listener to stop; that is always an error.
+    // if we somehow reached here, that means one of the listeners stopped.
+    // wait for one to finish and bail.
     match listeners.join_next().await {
         Some(Ok(Err(e))) => Err(e),
         Some(Ok(Ok(()))) => Err("a listener stopped unexpectedly".to_string()),
@@ -150,7 +144,7 @@ fn build_resolver(config: &Config) -> Result<TokioResolver, String> {
         name_servers.push(NameServerConfig::new(upstream.addr.ip(), true, connections));
     }
 
-    // No servers configured: use this machine's DNS servers instead.
+    // Nothing configured: fall back to the system's resolv.conf as upstream
     if name_servers.is_empty() {
         let path: &str = &config.upstream.resolv_conf;
         let text: String = match std::fs::read_to_string(path) {
@@ -185,11 +179,8 @@ fn build_resolver(config: &Config) -> Result<TokioResolver, String> {
         .map_err(|e| format!("cannot build upstream resolver: {e}"))
 }
 
-/// Returns the nameservers listed in resolv.conf `text`. Skips any that point back
-/// at one of our own plain-DNS listeners, because forwarding to ourselves would loop.
-// ponytail: only catches loops via loopback or the exact listen address. A
-// nameserver that is this machine's LAN IP is not detected.
-// ponytail: read once at startup; restart udns to pick up resolv.conf changes.
+// Parse resolv.conf for upstreams
+// filter for our own stuff.
 fn system_name_servers(
     path: &str,
     text: &str,
